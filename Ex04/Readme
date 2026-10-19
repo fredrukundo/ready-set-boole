@@ -1,0 +1,428 @@
+# Exercise 04 — Truth table
+
+> **Goal:** write `print_truth_table(formula)` that takes a propositional
+> formula in RPN and writes its truth table to standard output.
+>
+> **Allowed mathematical functions:** None
+> **Required complexity:** O(2ⁿ) time, N/A space
+
+---
+
+## 0. Before you start
+
+This exercise is a **small step from Exercise 03** in logic, but it's the first
+one where the **output format is graded character by character**. The subject
+prints the expected output through `cat -e` (Chapter VII), which means they are
+showing you exactly where every line ends. That's a strong hint that spacing
+matters.
+
+Two changes from Exercise 03:
+
+1. Leaves are now **variables** `A`–`Z` instead of the constants `0`/`1`.
+2. Instead of one answer, you print **every possible answer** — all 2ⁿ
+   combinations of the variables' values.
+
+Everything else — the `Node` class, the RPN parser, the recursive evaluator —
+carries over unchanged.
+
+---
+
+## 1. What is a truth table?
+
+A **truth table** lists every possible combination of input values for a
+formula, together with the result for each one. You have already met small ones
+in Exercise 03 (section 2), where each operator was described by its own table.
+
+This exercise generalises that: instead of a table for a single operator, you
+build one for an **arbitrary formula**.
+
+A truth table answers questions that a single evaluation cannot:
+
+- **Is this formula ever true?** (That's Exercise 07, SAT — look for a `1` in
+  the result column.)
+- **Is it always true?** Such a formula is called a **tautology** — the result
+  column is all `1`s. Example: `AA!|` (A ∨ ¬A).
+- **Is it never true?** That's a **contradiction** — all `0`s. Example: `AA!&`
+  (A ∧ ¬A).
+- **Are two formulas equivalent?** Build both tables and compare the result
+  columns. That's how you'd check the rewrite rules in Interlude 00.
+
+### 1.1 New vocabulary
+
+| Word | Meaning |
+|---|---|
+| **variable** | A symbol `A`–`Z` standing for an unknown true/false value. |
+| **assignment** (or *valuation*) | One specific choice of values for all variables, e.g. A=1, B=0, C=1. |
+| **truth table** | All assignments listed with the formula's result for each. |
+| **tautology** | A formula true under every assignment. |
+| **contradiction** | A formula false under every assignment. |
+| **satisfiable** | True under *at least one* assignment (Exercise 07). |
+
+---
+
+## 2. The output format — graded exactly
+
+The subject shows this for `AB&C|`:
+
+```
+$ ./ex04 | cat -e
+| A | B | C | = |$
+|---|---|---|---|$
+| 0 | 0 | 0 | 0 |$
+| 0 | 0 | 1 | 1 |$
+| 0 | 1 | 0 | 0 |$
+| 0 | 1 | 1 | 1 |$
+| 1 | 0 | 0 | 0 |$
+| 1 | 0 | 1 | 1 |$
+| 1 | 1 | 0 | 1 |$
+| 1 | 1 | 1 | 1 |$
+```
+
+### 2.1 Reading the `$` signs
+
+`cat -e` prints a `$` at the end of every line. **The `$` is not part of your
+output** — it's `cat`'s way of showing you where the line stops.
+
+That's the whole reason the subject piped through `cat -e`: it proves there is
+**no trailing space** after the final `|`. If your output had a stray space, the
+subject would have shown ` $` instead of `|$`. This is the detail the format
+check is really about.
+
+### 2.2 The three line shapes
+
+**Header** — one column per variable, in alphabetical order, then a final
+column headed `=` for the result:
+
+```
+| A | B | C | = |
+```
+
+**Separator** — three dashes per column, no spaces:
+
+```
+|---|---|---|---|
+```
+
+**Data rows** — `0` or `1` per column, result last:
+
+```
+| 0 | 0 | 1 | 1 |
+```
+
+All three follow the same rule: **`"| "` + cells joined by `" | "` + `" |"`**.
+Each cell is exactly one character wide, so every row lines up.
+
+### 2.3 Row order
+
+Rows count up in binary, with the **first variable as the most significant
+bit**:
+
+| row | A B C | read as binary |
+|---|---|---|
+| 0 | 0 0 0 | 0 |
+| 1 | 0 0 1 | 1 |
+| 2 | 0 1 0 | 2 |
+| … | … | … |
+| 7 | 1 1 1 | 7 |
+
+Look at the `C` column in the subject's output: it alternates every row. `B`
+alternates every two rows, `A` every four. That's the signature of ordinary
+binary counting, and it's what you get by looping an integer from `0` to
+`2ⁿ − 1` and reading off its bits.
+
+### 2.4 Verified
+
+This implementation's output for `AB&C|` was compared byte for byte against the
+subject's text:
+
+```bash
+$ python3 print_truth_table.py "AB&C|" | cat -e
+```
+
+**Identical — same MD5 checksum.** Not "looks the same": the same bytes.
+
+---
+
+## 3. The algorithm
+
+Three phases.
+
+### 3.1 Parse the formula into a tree
+
+Exactly as in Exercise 03, with one line changed: a leaf may now be a letter.
+
+```
+if char is A..Z (or 0/1)  -> push a leaf node
+if char is !              -> pop 1, push a ! node
+if char is & | ^ > =      -> pop 2, push an operator node
+```
+
+### 3.2 Collect the distinct variables
+
+Scan the formula, keep each letter once, **sort alphabetically**.
+
+Why sort? Two reasons:
+
+- It makes the columns come out `A`, `B`, `C` — matching the subject's example.
+- It makes the output **deterministic**. `BA&` and `AB&` then produce the same
+  column order, which is what a reader expects.
+
+Note the subject's wording: *"Each variable can be used several times."* So
+`AAB&|` has only **two** distinct variables and therefore 4 rows, not 8. The
+duplicate must not create an extra column.
+
+### 3.3 Loop over all 2ⁿ assignments
+
+```
+for combination in 0 .. 2^n - 1:
+    for each variable index i:
+        value[variable i] = bit (n-1-i) of combination
+    evaluate the tree under those values
+    print the row
+```
+
+Reading bit `n-1-i` (rather than bit `i`) puts the **first** variable in the
+**highest** bit, which produces the counting order from section 2.3.
+
+If this bit-extraction trick looks familiar, it should — it's exactly what you
+did in Exercise 01 to walk the bits of a number, and you'll use it once more in
+Exercise 08 to enumerate subsets of a set.
+
+---
+
+## 4. Worked example: `AB&C|`
+
+The formula is `(A ∧ B) ∨ C`. Its tree:
+
+```
+∨
+├── ∧
+│   ├── A
+│   └── B
+└── C
+```
+
+Variables: `A`, `B`, `C` → n = 3 → 2³ = **8 rows**.
+
+Take row 5. In binary, `5` is `101`, so A=1, B=0, C=1:
+
+- `A ∧ B` = 1 ∧ 0 = **0**
+- `0 ∨ C` = 0 ∨ 1 = **1**
+
+Row printed: `| 1 | 0 | 1 | 1 |` ✓ (matches the subject's seventh data line)
+
+See it yourself:
+
+```bash
+python3 print_truth_table.py -t "AB&C|"
+```
+
+---
+
+## 5. Complexity
+
+The subject requires **O(2ⁿ)** time, where `n` is the **number of distinct
+variables**. Space is N/A.
+
+- The outer loop runs exactly `2ⁿ` times — one row per assignment.
+- Each row evaluates the tree once: O(size of formula).
+- Total: **O(2ⁿ × formula length)**, which is O(2ⁿ) in the variable count. ✓
+
+**This is the first exercise where exponential cost is the *correct* answer.**
+In Exercises 00 and 01 an exponential or linear-in-value loop would have been a
+failure. Here, the output itself has 2ⁿ rows — you cannot print 2ⁿ lines in
+less than 2ⁿ time. The complexity is forced by the problem, not by the
+algorithm.
+
+Be ready to say that distinction out loud, because it sounds contradictory
+otherwise: *"O(2ⁿ) is required here because the output has 2ⁿ rows. The bound
+is on the number of variables, and it's a lower bound as much as an upper one."*
+
+Note once more that `n` has changed meaning again — it was a numeric value in
+Ex00/Ex01, string length in Ex03, and now a variable count. Always check what
+`n` refers to before quoting a complexity.
+
+### 5.1 A practical consequence
+
+The subject allows up to 26 variables. That would be 2²⁶ = **67,108,864 rows**.
+This implementation refuses to print more than 2¹⁶ = 65,536 rows unless you pass
+`-f`:
+
+```
+$ python3 print_truth_table.py "ABCDEFGHIJKLMNOPQR&&&&&&&&&&&&&&&&&"
+error: 18 distinct variables would produce 262144 rows
+hint: pass -f to print it anyway
+```
+
+That's an engineering choice, not a subject requirement — it stops a mistyped
+formula from flooding the terminal during a defense. Mention it if asked; the
+`-f` escape hatch means nothing is actually forbidden.
+
+---
+
+## 6. The code
+
+### 6.1 What changed from Exercise 03
+
+| Piece | Change |
+|---|---|
+| `Node` | unchanged |
+| `parse` | one branch: leaves accept `A`–`Z` as well as `0`/`1` |
+| `evaluate` | takes a `values` dict; a variable leaf looks itself up |
+| *new* `collect_variables` | distinct letters, sorted |
+| *new* `print_truth_table` | the 2ⁿ loop and the printing |
+
+The parser and evaluator are otherwise the same code as Exercise 03. Since each
+folder must stand alone, it is copied rather than imported.
+
+### 6.2 The printing
+
+```python
+print("| " + " | ".join(variables + ["="]) + " |")
+print("|" + "---|" * (count + 1))
+...
+print("| " + " | ".join(cells) + " |")
+```
+
+Three lines, matching the three shapes from section 2.2. Using `" | ".join(...)`
+rather than appending in a loop is what guarantees no trailing space — there is
+simply nowhere for one to creep in.
+
+### 6.3 The broken-pipe guard
+
+```python
+except BrokenPipeError:
+    os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+    sys.exit(0)
+```
+
+Without this, `python3 print_truth_table.py "ABCD^^^" | head -5` prints a
+traceback — `head` closes the pipe after five lines, and Python complains that
+it can't write any more. It looks exactly like a crash.
+
+An evaluator piping a long table into `head` is a very likely move, so this is
+worth having. The `dup2` is needed because Python flushes stdout again at
+shutdown and would raise a second time.
+
+---
+
+## 7. How to run it
+
+```bash
+cd Ex04
+
+python3 print_truth_table.py "AB&C|"
+python3 print_truth_table.py "AB>"
+python3 print_truth_table.py "ABC^^"
+```
+
+> **Quote your formulas.** `|`, `>`, `&` and `^` are shell metacharacters.
+> Unquoted, `python3 print_truth_table.py AB&C|` will background the command and
+> pipe it into a nonexistent program.
+
+**No arguments** — a demo covering the subject's example, a single variable,
+negation, material condition, a contradiction, a tautology, a repeated variable,
+and the error cases.
+
+**`-t`** — print the parsed tree and the readable infix form before the table.
+
+**`-f`** — print a table with more than 16 variables anyway.
+
+### The format check to run during a defense
+
+```bash
+python3 print_truth_table.py "AB&C|" | cat -e
+```
+
+Then hold it next to Chapter VII of the subject. Every character, including the
+`$` positions, is identical.
+
+### Verification performed
+
+- **Format:** byte-for-byte identical to the subject's example (same MD5).
+- **Values:** cross-checked against an independently written reference
+  implementation on **9,018 formulas** (every valid formula of length 1–6 over
+  A, B, C) plus **3,000 random formulas** using up to 6 variables. All match.
+
+---
+
+## 8. Common mistakes to avoid
+
+| Mistake | What happens | Fix |
+|---|---|---|
+| Trailing space after the last `\|` | Format mismatch, invisible until `cat -e` | Build with `" \| ".join(...)` |
+| Counting duplicate variables twice | `AAB&\|` prints 8 rows instead of 4 | Collect **distinct** letters |
+| Not sorting the variables | Column order depends on the formula's text | Sort alphabetically |
+| First variable in the lowest bit | Rows come out in the wrong order | Use bit `n-1-i` |
+| Forgetting the `=` header column | Header has one column too few | Append `"="` to the variable list |
+| Spaces in the separator row | `\| --- \|` instead of `\|---\|` | Separator has no spaces |
+| Tracebacks when piped to `head` | Looks like a crash | Catch `BrokenPipeError` |
+| Assuming 26 variables is printable | 67 million rows | Guard it (section 5.1) |
+
+---
+
+## 9. Do this on paper
+
+1. **Fill in the table for `AB>`** (A ⇒ B) from memory, then check. Remember the
+   only false row is A=1, B=0.
+
+2. **Predict the row count** for `AAB&|`, `ABC^^` and `A!`. Then verify. The
+   first one is the interesting case.
+
+3. **Build `AB&C|` by hand** — all eight rows — before running the program.
+   Compare line by line.
+
+4. **Spot the tautology:** write the tables for `AA!|` and `AA!&`. One result
+   column is all `1`s, the other all `0`s. Name each one using the vocabulary
+   from section 1.1.
+
+5. **Check a rewrite rule:** build the tables for `AB>` and for `A!B|` (¬A ∨ B).
+   The result columns should be identical — that's the material-condition
+   identity from Interlude 00, which you'll implement in Exercise 05.
+
+6. **Check De Morgan:** do the same for `AB&!` and `A!B!|`. Identical result
+   columns again. This is the rule Exercise 05 is built on.
+
+Exercises 5 and 6 are genuinely worth doing — they let you *verify* the rewrite
+rules before you have to *implement* them.
+
+---
+
+## 10. Peer-review preparation
+
+- **"Show me the subject's example."** → `python3 print_truth_table.py "AB&C|" |
+  cat -e`, next to Chapter VII. Byte-identical.
+- **"Why `cat -e`?"** → It marks line ends, proving there's no trailing
+  whitespace. That's what the subject is demonstrating.
+- **"How do you generate the rows?"** → Count an integer from 0 to 2ⁿ−1 and read
+  its bits; the first variable is the most significant bit, which gives the
+  natural counting order.
+- **"What if a variable repeats?"** → It's one column. `AAB&|` has two distinct
+  variables, so 4 rows.
+- **"Why is O(2ⁿ) acceptable here when it would fail Exercise 01?"** → The
+  output itself has 2ⁿ rows, so the bound is forced by the problem. It's a
+  lower bound as much as an upper one.
+- **"What does `n` mean in that bound?"** → The number of **distinct variables**
+  — not the string length, not a numeric value.
+- **"What's a tautology / contradiction?"** → Result column all `1`s / all `0`s.
+  Demo shows `AA!|` and `AA!&`.
+- **"What about an invalid formula?"** → Same three named failure modes as
+  Exercise 03, each with a specific message.
+- **"26 variables?"** → 67 million rows; guarded behind `-f` so a typo can't
+  flood your terminal.
+
+---
+
+## 11. What's next
+
+**Interlude 00 (Chapter VIII)** comes before Exercise 05 and is required
+reading — it lists the rewrite rules (double negation, material condition,
+equivalence, De Morgan, distributivity) that the next two exercises implement.
+Paper exercises 5 and 6 above already let you verify two of them.
+
+**Exercise 05 (NNF)** is where the tree investment pays off. You stop
+*evaluating* formulas and start *transforming* them: pushing every negation
+inward until it sits directly on a variable, and eliminating `>`, `=` and `^`
+along the way. The truth table you just built becomes your test tool — a rewrite
+is correct exactly when the original and the result have identical result
+columns.
