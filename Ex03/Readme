@@ -1,0 +1,609 @@
+# Exercise 03 — Boolean evaluation
+
+> **Goal:** write `eval_formula(formula)` that evaluates a propositional formula
+> written in Reverse Polish Notation and returns the result.
+>
+> **Allowed mathematical functions:** None
+> **Required complexity:** O(n) time, N/A space
+
+---
+
+## 0. Before you start — this is the pivot of the module
+
+Exercises 00–02 were about bits. This one starts a completely new block: **logic
+and formulas**. It is the most important exercise in the project, not because
+it's the hardest, but because of what gets built here.
+
+The subject drops a strong hint (the lightbulb box in Chapter VI):
+
+> *"How about using a (binary) Abstract Syntax Tree structure to parse and model
+> your formula? … Doing this now could probably prove useful to your
+> understanding for the following exercises!"*
+
+That hint is worth taking seriously. **Exercises 04, 05, 06, 07 and 09 all build
+on the structure you choose here.** You can pass *this* exercise with ten lines
+and no tree — but Exercises 05 and 06 require you to *rewrite* formulas, and
+rewriting a flat string is painful where rewriting a tree is natural. Section 4
+explains the choice in detail.
+
+Get a pen. Section 10 has paper work, and the tree drawings in particular are
+much easier to understand once you've drawn a few yourself.
+
+---
+
+## 1. Vocabulary
+
+| Word | Meaning |
+|---|---|
+| **proposition** | A statement that is either true or false. *"It is raining"* is one; *"what time is it?"* is not. |
+| **propositional formula** | Propositions combined with logical operators, e.g. *"A and (B or C)"*. |
+| **operator** (or **connective**) | A symbol combining propositions: and, or, not, … |
+| **operand** | A value an operator works on. In `1 & 0`, the operands are `1` and `0`. |
+| **arity** | How many operands an operator takes. `!` is *unary* (1), `&` is *binary* (2). |
+| **RPN** | Reverse Polish Notation — operators written *after* their operands. |
+| **stack** | A list where you only add and remove at one end. "Last in, first out", like a stack of plates. |
+| **AST** | Abstract Syntax Tree — a tree representing the structure of a formula. |
+| **node / leaf / root** | A point in a tree / a node with no children / the single node at the top. |
+| **subtree** | Any node together with everything hanging below it. |
+| **recursion** | A function that calls itself on smaller pieces of the problem. |
+
+The symbols used by the subject:
+
+| Symbol | Maths | Name | Arity |
+|---|---|---|---|
+| `0` | ⊥ | false ("falsum") | — |
+| `1` | ⊤ | true ("verum") | — |
+| `!` | ¬ | negation | unary |
+| `&` | ∧ | conjunction (and) | binary |
+| `\|` | ∨ | disjunction (or) | binary |
+| `^` | ⊕ | exclusive disjunction (xor) | binary |
+| `>` | ⇒ | material condition (implies) | binary |
+| `=` | ⇔ | logical equivalence | binary |
+
+---
+
+## 2. The six operators
+
+Four of these you already met as bitwise operators in Exercise 00 — `&`, `|`,
+`^` and negation behave identically here, just on single true/false values
+instead of 32 bits at once. The two new ones, `>` and `=`, need real
+explanation.
+
+### 2.1 The familiar four
+
+**Negation `!` (¬)** — flips the value:
+
+| A | ¬A |
+|---|---|
+| ⊥ | ⊤ |
+| ⊤ | ⊥ |
+
+**Conjunction `&` (∧)** — true only when **both** are true:
+
+| A | B | A ∧ B |
+|---|---|---|
+| ⊥ | ⊥ | ⊥ |
+| ⊥ | ⊤ | ⊥ |
+| ⊤ | ⊥ | ⊥ |
+| ⊤ | ⊤ | **⊤** |
+
+**Disjunction `|` (∨)** — true when **at least one** is true. Note this is
+*inclusive*: "A or B" is still true when both hold, unlike the everyday English
+"tea or coffee".
+
+| A | B | A ∨ B |
+|---|---|---|
+| ⊥ | ⊥ | ⊥ |
+| ⊥ | ⊤ | ⊤ |
+| ⊤ | ⊥ | ⊤ |
+| ⊤ | ⊤ | ⊤ |
+
+**Exclusive disjunction `^` (⊕)** — true when they **differ**. This is the
+"tea or coffee, not both" version:
+
+| A | B | A ⊕ B |
+|---|---|---|
+| ⊥ | ⊥ | ⊥ |
+| ⊥ | ⊤ | ⊤ |
+| ⊤ | ⊥ | ⊤ |
+| ⊤ | ⊤ | ⊥ |
+
+### 2.2 Material condition `>` (⇒) — the one that confuses everyone
+
+Read `A ⇒ B` as **"if A, then B"**.
+
+| A | B | A ⇒ B |
+|---|---|---|
+| ⊥ | ⊥ | **⊤** |
+| ⊥ | ⊤ | **⊤** |
+| ⊤ | ⊥ | ⊥ |
+| ⊤ | ⊤ | ⊤ |
+
+The top two rows shock everyone the first time: **when A is false, `A ⇒ B` is
+true regardless of B.** A false premise implies anything.
+
+Here's the intuition that makes it click. Think of an implication as a
+**promise**:
+
+> *"If it rains, I will take my umbrella."*
+
+When has that promise been **broken**? Only in one situation: it rained (A true)
+and I didn't take my umbrella (B false). That is the single ⊥ row in the table.
+
+Now consider the days it didn't rain. I took my umbrella anyway — did I break
+the promise? No, I never said anything about sunny days. I left it at home — did
+I break it? Also no. **A promise about rainy days is not violated by anything
+that happens on a sunny day**, so it still counts as kept. Hence ⊤ in both rows
+where A is ⊥.
+
+The key mental shift: `⇒` does **not** mean "A causes B". It only records
+whether the promise was broken. That's why logicians call it the *material*
+condition — it's about truth values, not about meaning or causation.
+
+**The identity to memorize** (it's in the subject's Interlude 00, and you'll
+need it in Exercise 05):
+
+```
+A ⇒ B   is the same as   ¬A ∨ B
+```
+
+Check it against the table: "either the premise fails, or the conclusion holds."
+That's exactly how this file implements it: `(not left) or right`.
+
+**`>` is not commutative.** `1 0 >` is false but `0 1 >` is true. Operand order
+matters here, and it's the most common source of bugs in this exercise — see
+section 6.2.
+
+### 2.3 Logical equivalence `=` (⇔)
+
+Read `A ⇔ B` as **"A if and only if B"** — true when both sides have the *same*
+value:
+
+| A | B | A ⇔ B |
+|---|---|---|
+| ⊥ | ⊥ | **⊤** |
+| ⊥ | ⊤ | ⊥ |
+| ⊤ | ⊥ | ⊥ |
+| ⊤ | ⊤ | **⊤** |
+
+Two useful observations:
+
+- `⇔` is the exact **opposite of `⊕`**. XOR is "they differ", equivalence is
+  "they're the same". So `A ⇔ B` equals `¬(A ⊕ B)`.
+- The subject's Interlude 00 gives the rewrite you'll need in Exercise 05:
+  `(A ⇔ B) ⇔ ((A ⇒ B) ∧ (B ⇒ A))` — a promise in both directions.
+
+---
+
+## 3. Reverse Polish Notation
+
+### 3.1 The idea
+
+Normally we write operators **between** their operands — `1 & 0`. That's called
+*infix*. RPN puts the operator **after** both operands: `1 0 &`.
+
+| infix | RPN |
+|---|---|
+| `1 ∧ 0` | `10&` |
+| `1 ∨ 0` | `10\|` |
+| `(1 ∨ 0) ∧ 1` | `10\|1&` |
+| `1 ∧ (0 ∨ 1)` | `101\|&` |
+
+Look carefully at those last two. In infix they need **parentheses** to tell
+them apart. In RPN they don't — the difference is entirely in the order of the
+symbols. That's RPN's superpower:
+
+> **RPN needs no parentheses and no precedence rules.** Every formula has exactly
+> one reading.
+
+In infix you must know whether `∧` binds tighter than `∨` to read `A ∨ B ∧ C`.
+In RPN the question never arises. This is why it's easy for a computer to parse,
+and it's also why your pocket calculator from the 1980s probably used it.
+
+### 3.2 How to read RPN by hand
+
+Scan left to right with a stack:
+
+- **See a value?** Push it.
+- **See an operator?** Pop the operands it needs, apply it, push the result.
+
+At the end, exactly one value remains: the answer.
+
+Let's do `1011||=` — the fifth subject example — by hand:
+
+| step | char | action | stack (bottom → top) |
+|---|---|---|---|
+| 0 | `1` | push ⊤ | ⊤ |
+| 1 | `0` | push ⊥ | ⊤, ⊥ |
+| 2 | `1` | push ⊤ | ⊤, ⊥, ⊤ |
+| 3 | `1` | push ⊤ | ⊤, ⊥, ⊤, ⊤ |
+| 4 | `\|` | pop ⊤ and ⊤ → ⊤ ∨ ⊤ = ⊤ | ⊤, ⊥, ⊤ |
+| 5 | `\|` | pop ⊤ and ⊥ → ⊥ ∨ ⊤ = ⊤ | ⊤, ⊤ |
+| 6 | `=` | pop ⊤ and ⊤ → ⊤ ⇔ ⊤ = ⊤ | ⊤ |
+
+One value left: **true** ✓ (the subject says `true`)
+
+### 3.3 Why the stack empties correctly
+
+A well-formed formula always ends with exactly one value. If you end with **more
+than one**, an operator is missing. If you run out of operands **mid-way**, you
+have too many operators. Both cases are malformed input, and this implementation
+reports them rather than guessing — see section 7.
+
+---
+
+## 4. Two approaches — and why we build a tree
+
+There are two ways to solve this exercise.
+
+### Approach A — evaluate the string directly
+
+Use the stack from section 3.2, but push **booleans** instead of symbols. When
+you hit an operator, pop two booleans, compute, push the answer. Ten lines,
+done.
+
+### Approach B — build a tree, then evaluate the tree
+
+Same stack walk, but instead of pushing booleans you push **nodes**. An operator
+pops its operand nodes and becomes their *parent*. At the end, one tree remains,
+and you evaluate it recursively.
+
+### Which one?
+
+For *this* exercise alone, Approach A is simpler and just as correct. **But it's
+a dead end**, and here's why.
+
+| Exercise | What it needs | Works on a string? | Works on a tree? |
+|---|---|---|---|
+| 03 Evaluate | compute one value | ✔ easy | ✔ easy |
+| 04 Truth table | evaluate repeatedly with different variable values | ✔ ok | ✔ ok |
+| 05 NNF | **rewrite** the formula (De Morgan, etc.) | ✘ painful | ✔ natural |
+| 06 CNF | **rewrite** again (distributivity) | ✘ painful | ✔ natural |
+| 07 SAT | evaluate repeatedly | ✔ ok | ✔ ok |
+| 09 Set eval | same structure, sets instead of booleans | ✔ ok | ✔ ok |
+
+The problem is Exercises 05 and 06. They don't ask you to *compute* a formula —
+they ask you to **transform it into an equivalent one**. Take De Morgan's law:
+
+```
+¬(A ∧ B)   becomes   ¬A ∨ ¬B
+```
+
+On a **tree**, that's a local surgery: find a `¬` node whose child is a `∧`,
+replace it with a `∨` node whose two children are negated. A dozen lines of
+recursion.
+
+On a **string**, you'd have to find where the sub-formula being negated starts
+and ends — which means counting operands and operators backwards through the
+text — then splice pieces together. It's doable, and it's miserable, and you'd
+do it twice more for the other rewrite rules.
+
+**So we build the tree here**, exactly as the subject suggests. It costs a few
+extra lines now and saves a great deal later.
+
+### 4.1 What the tree looks like
+
+The subject itself draws the tree for `⊤ ∧ (⊥ ∨ ⊤)`, i.e. `101|&`:
+
+```
+    ∧
+   / \
+  ⊤   ∨
+     / \
+    ⊥   ⊤
+```
+
+This implementation prints exactly that:
+
+```bash
+$ python3 eval_formula.py -t "101|&"
+
+      ∧
+      ├── ⊤
+      └── ∨
+          ├── ⊥
+          └── ⊤
+```
+
+Notice how the tree makes the structure obvious: the `∧` at the root is the
+*last* operation performed, and the leaves are the raw values. Evaluation flows
+**upward** from the leaves.
+
+---
+
+## 5. The algorithm
+
+Two phases: **parse** (string → tree), then **evaluate** (tree → boolean).
+
+### 5.1 Parsing
+
+```
+for each character, left to right:
+    if it is 0 or 1        -> push a leaf node
+    if it is !             -> pop 1 node, push a ! node with it as child
+    if it is & | ^ > =     -> pop 2 nodes, push an operator node with both
+    otherwise              -> error: invalid character
+
+at the end, exactly one node must remain -> that's the root
+```
+
+### 5.2 Evaluating
+
+Recursion does all the work, because each operator only needs the *values* of
+its children:
+
+```
+evaluate(node):
+    if node is 0        -> return False
+    if node is 1        -> return True
+    if node is !        -> return not evaluate(child)
+    otherwise           -> compute both children, then apply the operator
+```
+
+The recursion naturally works bottom-up: to evaluate the root you must first
+evaluate its children, which first evaluate theirs, down to the leaves where
+the values are known.
+
+### 5.3 Worked example: `10|1&`
+
+Parsing:
+
+| step | char | action | stack |
+|---|---|---|---|
+| 0 | `1` | push ⊤ | ⊤ |
+| 1 | `0` | push ⊥ | ⊤, ⊥ |
+| 2 | `\|` | pop 2, push subtree | (⊤ ∨ ⊥) |
+| 3 | `1` | push ⊤ | (⊤ ∨ ⊥), ⊤ |
+| 4 | `&` | pop 2, push subtree | ((⊤ ∨ ⊥) ∧ ⊤) |
+
+Resulting tree:
+
+```
+∧
+├── ∨
+│   ├── ⊤
+│   └── ⊥
+└── ⊤
+```
+
+Evaluating, bottom-up: `⊤ ∨ ⊥` = ⊤, then `⊤ ∧ ⊤` = **⊤**. ✓
+
+Run `python3 eval_formula.py -t "10|1&"` to see all of this printed.
+
+---
+
+## 6. The code
+
+### 6.1 The `Node` class
+
+```python
+class Node:
+    def __init__(self, symbol, left=None, right=None):
+        self.symbol = symbol
+        self.left = left
+        self.right = right
+```
+
+Three shapes of node:
+
+- **leaf** — symbol is `0` or `1`, no children
+- **unary** — symbol is `!`, only `left` used
+- **binary** — symbol is one of `&|^>=`, both children used
+
+Keeping unary operators in `left` (rather than `right`) is a convention; what
+matters is being consistent, because Exercises 05 and 06 will walk these nodes.
+
+### 6.2 The operand-order trap
+
+This is the single most likely bug in this exercise:
+
+```python
+right = stack.pop()    # pops FIRST
+left = stack.pop()     # pops SECOND
+```
+
+A stack is last-in-first-out. In `A B >`, `B` was pushed *last*, so it comes off
+*first*. Popping into `left` first would silently reverse every operand pair.
+
+You wouldn't notice with `&`, `|`, `^` or `=` — **they're all commutative**, so
+swapping the operands gives the same answer. But `>` is not:
+
+```
+10>   is  ⊤ ⇒ ⊥  =  false
+01>   is  ⊥ ⇒ ⊤  =  true
+```
+
+If you get this backwards, four of your six operators still look perfect and
+only `>` misbehaves. That's a nasty bug to chase, so get it right up front —
+and if an evaluator tests exactly one thing, `10>` is a good candidate.
+
+### 6.3 The operators in code
+
+```python
+if symbol == "&":  return left and right
+if symbol == "|":  return left or right
+if symbol == "^":  return left != right          # true when they differ
+if symbol == ">":  return (not left) or right    # A => B  is  ¬A ∨ B
+if symbol == "=":  return left == right          # true when they're the same
+```
+
+Note how `^` and `=` fall out as plain comparisons — `!=` is "they differ" and
+`==` is "they're the same", which is precisely what those truth tables say. And
+`>` is the `¬A ∨ B` identity from section 2.2, written directly.
+
+Unlike Exercises 00 and 01, **there is no operator restriction here** — the
+subject only forbids mathematical library functions, and `and`/`or`/`not` are
+language keywords, not maths functions.
+
+---
+
+## 7. Invalid formulas
+
+The subject says the behaviour is undefined for invalid input, but *encourages*
+printing an error message. This implementation raises `ValueError` with a
+specific diagnosis rather than crashing or returning a wrong answer:
+
+```
+''      -> empty formula
+'1&'    -> '&' at position 1 needs 2 operands, but only 1 available
+'11'    -> formula is incomplete: 2 values left on the stack, expected exactly 1
+'1A&'   -> invalid character 'A' at position 1 (allowed: 0 1 ! & | ^ > =)
+'&'     -> '&' at position 0 needs 2 operands, but only 0 available
+```
+
+Three distinct failure modes, worth being able to name:
+
+1. **Not enough operands** — more operators than values
+2. **Too many values left** — an operator is missing
+3. **Unknown character** — something outside the allowed alphabet
+
+This costs almost nothing to implement and is the kind of polish evaluators
+notice, since it's explicitly invited by the subject.
+
+---
+
+## 8. Complexity
+
+The subject requires **O(n) time**, where `n` is the length of the formula
+string. Space is N/A.
+
+- **Parsing:** one pass over the string. Each character causes at most one push
+  and a bounded number of pops → **O(n)** ✓
+- **Evaluation:** each character creates at most one node, so the tree has O(n)
+  nodes, and the recursion visits each exactly once → **O(n)** ✓
+- **Total:** O(n) + O(n) = **O(n)** ✓
+
+Note that `n` means the **length of the input string** here, not a numeric
+value — a different meaning from Exercises 00 and 01, where `n` was the value of
+a number. The meaning of `n` always depends on what the input is.
+
+**A word on the amortized pop count:** it might look like an operator "pops
+twice" so the cost isn't linear. But every node pushed is popped at most once
+overall, so across the whole parse there are at most `n` pushes and `n` pops.
+That's the standard amortized argument, and it's a good thing to have ready if
+an evaluator probes.
+
+On space: the tree holds O(n) nodes and the recursion depth is at most the
+height of the tree, which is O(n) in the worst case (a fully left-leaning
+formula). The subject sets no bound, so this is fine.
+
+---
+
+## 9. How to run it
+
+```bash
+cd Ex03
+
+python3 eval_formula.py "10&"        # -> False
+python3 eval_formula.py "10|"        # -> True
+python3 eval_formula.py "1011||="    # -> True
+```
+
+> **Quote your formulas.** `|`, `>`, `&` and `^` are special characters in the
+> shell — `|` pipes, `>` redirects to a file, `&` backgrounds the command.
+> Without quotes, `python3 eval_formula.py 10|` will hang or create a file
+> instead of running. This trips people up during defenses, so mention it before
+> handing over the keyboard.
+
+**No arguments** — the demo: the five subject examples, then every operator on
+every input combination, then the error-handling examples.
+
+**`-t`** — the full breakdown: parse table, tree drawing, readable infix form,
+and result.
+
+```bash
+python3 eval_formula.py -t "101|&"
+```
+
+### The subject's examples, all verified
+
+| Command | Expected | Got |
+|---|---|---|
+| `eval_formula("10&")` | false | False ✓ |
+| `eval_formula("10\|")` | true | True ✓ |
+| `eval_formula("11>")` | true | True ✓ |
+| `eval_formula("10=")` | false | False ✓ |
+| `eval_formula("1011\|\|=")` | true | True ✓ |
+
+All five match.
+
+### Verification performed
+
+The tree-based evaluator was cross-checked against an independent
+stack-of-booleans evaluator on **every valid formula of length 1 to 7** —
+19,114 formulas. All agree.
+
+---
+
+## 10. Common mistakes to avoid
+
+| Mistake | What happens | Fix |
+|---|---|---|
+| Popping `left` before `right` | Operands reversed; only `>` shows it | `right = pop()` then `left = pop()` |
+| Thinking `⊥ ⇒ ⊤` is false | Wrong results for `>` | False implies anything (section 2.2) |
+| Treating `\|` as exclusive or | `11\|` gives false instead of true | `\|` is inclusive; `^` is exclusive |
+| Forgetting `!` is unary | Pops two operands and corrupts the stack | `!` pops exactly 1 |
+| Not quoting formulas in the shell | Command hangs or writes a file | Use `"..."` |
+| Evaluating top-down | Operators need their children's *values* first | Recurse to the leaves, then combine |
+| Skipping the tree to save time | Ex05 and Ex06 become far harder | Build it now (section 4) |
+
+---
+
+## 11. Do this on paper
+
+1. **Translate to RPN:** write `(A ∧ B) ∨ C`, `¬(A ∨ B)` and `A ⇒ (B ∧ C)` in
+   RPN. Then translate back and check you get the original.
+
+2. **Evaluate by hand** using the stack table format from section 3.2:
+   `110&|`, `110>&`, `10^1=`. Check each with the program.
+
+3. **Draw the tree** for `11&10&|` before running `-t` on it. Compare.
+
+4. **Convince yourself about `⇒`:** fill in the truth table for `¬A ∨ B` from
+   scratch and confirm it matches the `A ⇒ B` table in section 2.2. This
+   identity is the basis of Exercise 05.
+
+5. **Find the difference:** evaluate `10>` and `01>` by hand. Explain in one
+   sentence why they differ, and why the same experiment on `&` would show
+   nothing.
+
+6. **Break it deliberately:** write three invalid formulas, one for each failure
+   mode in section 7. Predict the error message, then check.
+
+---
+
+## 12. Peer-review preparation
+
+- **"Explain RPN."** → Operators come after their operands. No parentheses and
+  no precedence rules are needed, because every formula has exactly one reading.
+- **"How do you parse it?"** → One left-to-right pass with a stack. Values are
+  pushed; operators pop their operands and push the result back.
+- **"Why did you build a tree?"** → The subject suggests it, and Exercises 05
+  and 06 need to *rewrite* formulas. Rewriting is local surgery on a tree and
+  painful text-splicing on a string.
+- **"Why is `⊥ ⇒ ⊤` true?"** → An implication is a promise, broken only when the
+  premise holds and the conclusion fails. Nothing on a sunny day can break a
+  promise about rainy days. Equivalently, `A ⇒ B` is `¬A ∨ B`.
+- **"Show me operand order matters."** → `10>` is false, `01>` is true. The
+  other operators are commutative so they'd hide the bug.
+- **"Justify O(n)."** → One pass to parse, one visit per node to evaluate, and
+  the tree has at most one node per character.
+- **"What happens with a bad formula?"** → Three named failure modes with
+  specific messages (section 7).
+- **"Show me it works."** → `python3 eval_formula.py` prints the subject's five
+  examples plus every operator's full truth table. Then `-t` on anything they
+  choose.
+
+---
+
+## 13. What's next
+
+**Exercise 04 (Truth table)** replaces the constants `0`/`1` with variables
+`A`–`Z` and prints the result for every possible combination of their values.
+The parser you just wrote needs one small change — accept letters as leaves —
+and then you loop over `2ⁿ` assignments.
+
+The `Node` class and `parse` function from this exercise carry forward into
+Ex04, Ex05, Ex06, Ex07 and Ex09. Since each folder must stand alone, that code
+gets copied rather than imported — but it's the *same* code, so any improvement
+you make here is worth propagating forward.
